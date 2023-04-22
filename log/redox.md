@@ -83,7 +83,7 @@ fn main() {
 
 而在服务端，通过上述的轮询代码中的读请求进入内核，并进入 `RootScheme::read` 函数接收客户端发来的请求。`RootScheme` 根据文件描述符等信息确定对应的 `UserScheme` 并尝试从消息队列中读取信息，在完成必要的数据复制后返回用户态，服务端进入 `Scheme::handle`，在内部再根据数据包中的标注转发给不同的处理例程。
 
-从这个过程来看，scheme 机制本身并不对命名空间做出任何的假设，对命名空间内部的所有操作都由服务端程序本身来完成。
+从这个过程来看，scheme 机制本身并不对 Scheme 内部的命名空间做出任何的假设，对命名空间内部的所有操作都由服务端程序本身来完成。
 
 在服务器端完成处理过程后，调用文件写操作，调用 `RootScheme::write` 向对应的 `UserScheme` 发送回复报文，`UserScheme::read` 收到结果返回。
 
@@ -95,3 +95,29 @@ fn main() {
 + redox 是如何通过 scheme 来实现 `fork/clone` 的？
   目前的发现：在内核端格式为 `proc:/<pid>/`，`pid = "new"` 时表示新建一个进程，它是如何被用户态调用的。可能需要查阅 redox 对 libc/Rust std 的移植。
 + redox 的机制是基于原本对于文件的抽象，因此就需要处理例如 `dup`, `pipe`, `lseek` 之类的操作，需要进一步考察不同的 scheme 是如何处理这些操作的，并通过相应的语义来实现一些精巧的接口。
+
+## Namespace
+
+Namespace 是 scheme 的一个集合，限定了一个进程能够使用的 scheme。
+
+在初始化时会创建两个 namespace: NullNamespace（包含最基础的 Scheme），RootNamespace（包含了所有在 kernel 内实现的 scheme），对 namespace 的创建通过 `mkns` 系统调用来实现（仅 root 用户）。除 root 用户外，一个用户进程只能拥有 1（2？）个对 namespace 的访问，在打开一个 scheme 下的文件时，会检查是否满足相应的 namespace 访问权限。
+
+## ProcScheme
+
+`ProcScheme` 实现在内核内部，其基本功能和 Linux 中的 `/proc` 文件系统类似，可以查看/修改进程的部分属性，但是它相较于 `/proc` 功能更加全面，以至于可以仅依靠 `ProcScheme` 在用户态实现 fork/exec/clone（参见 [clone](https://gitlab.redox-os.org/redox-os/relibc/-/blob/d5c88c7ca66e77c8a8bbf98be27b61c850a6f971/src/platform/redox/clone.rs) [fork/exec](https://gitlab.redox-os.org/redox-os/relibc/-/blob/d5c88c7ca66e77c8a8bbf98be27b61c850a6f971/src/platform/redox/redox-exec/src/lib.rs)，也因此没有提供 fork/exec/clone 的系统调用）。
+
+### 可操作的属性
+
+接口的一般格式为 `proc:/<proc>/<attr>`，其中 `<proc>` 为任务号或 `current`（当前任务）或 `new` （新建一个任务）（注：redox 不在 kernel 端区分进程或线程，仅使用一套数据结构，通过用户态是否对地址空间/文件使用共享或复制操作区分——需要再看一下 `exit` 的实现来确认一下）。
+
+`<attr>` 除了常规的信息之外，甚至包括内存、地址空间、file-table、寄存器信息等。
+
+### 可执行的操作
+
+许多接口的语义相对比较直白，这里提一些特别的
+
+对于内存 `mem` 来说，对其的读写就是直接对相应内存空间的读写，可以通过 `lseek` 来移动指针（这也是 `lseek` 目前唯一合法的使用场景）；
+
+对于地址空间 `addrspace` 、文件 `filetable`、信号处理 `sigactions` 来说，它们都可以根据相应的格式进行读取（`addrspace` 甚至可以通过写入来修改内存映射），不过更有意思的是，它们可以通过 `dup` 接口来实现在内核内对相应的数据结构进行复制等操作（redox 为 `dup` 系统调用加入了一个 str 参数提供额外的选项）。同时 `current-addrspace`,`current-filetable`,`current-sigactions` 则专门用来跨任务复制相应的数据结构，向它们写入对应的信息，内核就会从对应的 `fd` 那里拷贝信息。
+
+另外有一个辅助编程的 attr, `file-via-dup`，通过 `dup(fd, <attr>)` 则可以生成同一任务下相应 `attr` 的 fd。
