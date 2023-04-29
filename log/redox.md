@@ -121,3 +121,9 @@ Namespace 是 scheme 的一个集合，限定了一个进程能够使用的 sche
 对于地址空间 `addrspace` 、文件 `filetable`、信号处理 `sigactions` 来说，它们都可以根据相应的格式进行读取（`addrspace` 甚至可以通过写入来修改内存映射），不过更有意思的是，它们可以通过 `dup` 接口来实现在内核内对相应的数据结构进行复制等操作（redox 为 `dup` 系统调用加入了一个 str 参数提供额外的选项）。同时 `current-addrspace`,`current-filetable`,`current-sigactions` 则专门用来跨任务复制相应的数据结构，向它们写入对应的信息，内核就会从对应的 `fd` 那里拷贝信息。
 
 另外有一个辅助编程的 attr, `file-via-dup`，通过 `dup(fd, <attr>)` 则可以生成同一任务下相应 `attr` 的 fd。
+
+## 启动与守护进程
+
+redox 系统首个用户态进程 [init](https://gitlab.redox-os.org/redox-os/init) 一开始会执行 `initfs` 上的一段脚本，启动一系列必须的服务，其中最重要的是主文件系统，当主文件系统启动后剩余服务就从主文件系统上进行加载。
+
+这些加载进来的服务以守护进程的方式运行。（技术上讲，通过 `fork`，（如果初始化成功）父进程直接返回，子进程被挂载到 `init` 底下）初始化过程中，会新建它们需要的 `Scheme`，并注册相应接口。随后将自身 `namespace` 设置为 0(NullNamespace)，但是权限机制允许它们继续处理它们新建的 scheme，只是不能再新建罢了（这一点感觉是为了安全考虑，因为 NullNamespace 事实上是只进不出的）。
