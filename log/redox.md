@@ -87,7 +87,7 @@ fn main() {
 
 在服务器端完成处理过程后，调用文件写操作，调用 `RootScheme::write` 向对应的 `UserScheme` 发送回复报文，`UserScheme::read` 收到结果返回。
 
-![一张粗糙的草图](redox.jpg)
+![一张粗糙的草图](pics/redox.jpg)
 
 ## 问题
 

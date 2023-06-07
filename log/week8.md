@@ -18,9 +18,9 @@
   - 似乎有些 kernel only 的线程（如 gc 任务），未来实现多任务的时候可能需要注意
 + 对标 rCore ch4 实现
 
-![](week8-1.png)
+![](pics/week8-1.png)
 
-![](week8-2.png)
+![](pics/week8-2.png)
 
 + 初步了解 seL4, zCore(zircon) 的设计思想
 + 阅读 redox IPC 部分代码，分析其架构
