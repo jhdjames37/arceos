@@ -14,7 +14,7 @@
 
 ArceOS 本身即为模块化设计，从下到上可以分为四层：crates 层提供一些通用，操作系统无关的工具，modules 层实现操作系统的各个模块，ulib 层封装整合相关操作系统接口，app 层为各种应用程序。整个操作系统运行于单一特权级，用户应用和操作系统并不做任何隔离。
 
-要将上述设计修改为微内核架构，架构上需要完成两个大的修改。第一个修改是分离特权级，分离用户态程序和内核。因此我将 ulib, app 层与 modules 层分离，二者分别编译。而 crates 层本身并不依赖任何环境，因此可以同时作为两部分的依赖。同时，之前操作系统提供的功能也并不充分，我们还需引入实现用户态所必要的一些内核机制。另外一个修改则是针对微内核架构的——我们需要精简位于内核的模块数量，将部分 modules 层的模块移动至用户态（这是逻辑上的，实际为了兼容性并未实际移动这些模块的位置），同时，还需要和其它微内核架构一样，提供必要的进程间通信（IPC）机制来让这些模块对外提供服务。
+要将上述设计修改为微内核架构，架构上需要完成两个大的修改。第一个修改是分离特权级，分离用户态程序和内核。因此我将 ulib, app 层与 modules 层分离，二者分别编译。而 crates 层本身并不依赖任何环境，因此可以同时作为两部分的依赖。同时，之前操作系统提供的功能也并不充分，我们还需引入实现用户态所必要的一些内核机制。另外一个修改则是针对微内核架构的——我们需要精简位于内核的模块数量，将部分 modules 层的模块移动至用户态（这是逻辑上的，实际为了兼容性并未实际移动这些模块的位置），后文称为「用户态服务」；同时，还需要和其它微内核架构一样，提供必要的进程间通信（IPC）机制来让这些模块对外提供服务。
 
 ### 依赖库的扩充
 
@@ -53,6 +53,8 @@ ArceOS 本身即为模块化设计，从下到上可以分为四层：crates 层
 
 微内核设计的一个重要部分是高效、安全的进程通信机制，除了信号、管道等 Linux 等主流操作系统采用的 IPC 机制外，常见的微内核操作系统都设计实现了自己的 IPC 机制。我主要借鉴了 Redox 操作系统的 Scheme IPC 机制，其简介可以见[这里](redox.md)。代码实现位于 `axscheme`。
 
+![](pics/redox_new.png)
+
 Scheme 的所有接口都是通过文件系统调用实现的，因此在 `lib.rs` 的 `syscall_handler` 就处理了这些系统调用。注意到有很多系统调用有相似的接口参数，且这些请求会直接被转发给各个 Scheme 做处理，因此 Redox 便使用系统调用号中的若干位来标志不同的参数类型，并将它们合并进行处理。
 
 在调用 `open` 时，函数会首先解析 Scheme 的类型，并查找对应的 Scheme，随后调用 Scheme 内部的 `open` 方法，它会返回一个其内部使用的唯一标识符。而在文件表中的文件描述符则记录了对应的 Scheme 编号和内部的唯一标识符。随后的读写等操作会首先根据 `fd` 查找 scheme 和内部标识符，并将内部标识符和其它参数一起传递给 Scheme 处理。在 `close` 时，函数会首先调用 Scheme 的关闭接口，随后从文件表中删去对应项。
@@ -74,7 +76,7 @@ Redox 的 `RootScheme` 主要有三个功能，Scheme 建立，读取列表和�
 
 由于模块本身的功能并不依赖于任何特权指令，模块内部并不需要任何的调整，真正需要修改的是向下的依赖接口和向上的服务接口。这两个模块在这一部分的修改比较类似，下面以 axnet 模块进行介绍。所有的修改均使用 feature 包裹。
 
-axnet 模块向下主要依赖 `axdriver`, `axtask`, `axsync`，其中 `axtask` 和 `axsync` 都已经在之前完成了用户态接口，可以直接复用。对 `axdriver` 的依赖主要是 `AxNetDevice` trait 和它的接口，它抽象了一个网卡设备。由于我们无法简单的将网卡驱动进行迁移（这涉及到 MMIO 映射的修改），我们选择保持接口不变，但是在用户态实现一个虚拟的网卡设备，它向上提供这些接口，而内部的实现是将这些读写请求通过 Scheme 转发给内核态 `dev:/net`。这一部分修改位于 `axnet/lib.rs`。
+axnet 模块向下主要依赖 `axdriver`, `axtask`, `axsync`。其中 `axtask` 和 `axsync` 都已经在之前完成了用户态接口，可以直接复用。对 `axdriver` 的依赖主要是 `AxNetDevice` trait 和它的接口，它抽象了一个网卡设备。由于我们无法简单的将网卡驱动进行迁移（这涉及到 MMIO 映射的修改），我们选择保持接口不变，但是在用户态实现一个虚拟的网卡设备，它向上提供这些接口，而内部的实现是将这些读写请求通过 Scheme 转发给内核态 `dev:/net`。这一部分修改位于 `axnet/lib.rs`。
 
 我们还需要在内核提供 `dev:/net` 的读写实现，这里我们就可以将这些请求重新转发给原来的网卡设备进行处理。这一部分代码位于 `axscheme/dev.rs`，除了上面的功能外，还需要提供网卡信息的读取接口，在 `open` 时，根据不同的路径提供不同的 File handle。
 
@@ -86,7 +88,7 @@ axnet 模块向下主要依赖 `axdriver`, `axtask`, `axsync`，其中 `axtask` 
 
 对于用户态程序，编译流程依然从应用程序开始，它会依赖位于 `ulib/libax_user` 的修改版用户库，对于用户态服务 net/fs\_deamon，还会依赖相应的系统模块 axnet/axfs，并启用用户态 feature。
 
-对于内核态程序，编译流程会从 `axuser` 模块开始，该模块定义了一些必要的 feature，同时将用户态程序拷贝至 `.data` 段（由于微内核架构中文件系统并不位于内核态，因此在首次进入用户态是无法调用文件系统读取二进制程序，我采取了直接将 ELF 文件置于数据段中读取的方式。而在进入用户态后，即可加载文件系统从而完成从硬盘中读取文件的操作。）
+对于内核态程序，编译流程会从 `axuser` 模块开始，该模块定义了一些必要的 feature，同时将用户态程序拷贝至 `.data` 段（由于微内核架构中文件系统并不位于内核态，因此在首次进入用户态时无法调用文件系统读取二进制程序，我采取了直接将 ELF 文件置于数据段中读取的方式。而在进入用户态后，即可加载文件系统从而完成从硬盘中读取文件的操作。）
 
 在 `Makefile` 中还加入了一些额外的编译参数，`MICRO=y` 表示使用微内核参数编译，`KERN_LOG` 和 `USER_LOG` 可以分别指定内核态和用户态日志等级，`MICRO_TEST=<app>` 用于编译一个 crate 中不同的二进制目标（binary target），也就是在 `cargo build` 命令中加入 `--bin=<app>` 选项。
 
@@ -108,26 +110,108 @@ axnet 模块向下主要依赖 `axdriver`, `axtask`, `axsync`，其中 `axtask` 
 
 ### 用户态应用
 
-基于上面的用户态服务，我还迁移了原有的 `net/httpserver`, `net/httpclient`, `fs/shell` 应用，代码位于 `apps/kernel/apps`，其启动入口位于 `apps/microkernel/init/bin/{test_http, run_http_server, run_fs_shell}.rs` 中，运行命令同上，但是和原版一样，需要分别加入 `NET=y` 和 `FS=y` 来启动相关 feature。
+基于上面的用户态服务，我还迁移了原有的 `net/httpserver`, `net/httpclient`, `fs/shell` 应用，代码位于 `apps/microkernel/apps`，其启动入口位于 `apps/microkernel/init/bin/{test_http, run_http_server, run_fs_shell}.rs` 中，运行命令同上，但是和原版一样，需要分别加入 `NET=y` 和 `FS=y` 来启动相关 feature。
 
 ### 完整的应用支持
 
-TODO: 向 FAT32 写入文件，执行。
+上述测试应用均为单执行文件应用程序，主要用于验证正确性和自动化测试。事实上，微内核架构的 ArceOS 还可以从硬盘读取程序运行，结合 shell，我们便可以组合更多复杂的功能。
+
+首先，我们需要构建装载至硬盘的可执行文件。之前提到的 `test_http` 和 `run_http_server` 程序均运行了 `net_deamon`，`run_fs_shell` 程序同时运行了 `fs_deamon`，因此不宜用于硬盘中的应用程序加载（可能因启动多个服务导致错误）。以上三个程序的单独运行入口为 `apps/microkernel/apps/bin/{http_server,http_client,shell}.rs`。`net_deamon` 以及 `test_sleep`,`test_mem`,`test_scheme` 等程序均可独立运行。
+
+随后，我们需要将这些文件写入硬盘镜像。`tools/fat32_pack` 实现了一个简单的装载程序，每次可将一个文件复制进入硬盘镜像。`make_disk.sh` 提供了编译和打包脚本。
+
+另外，和之前一样，运行的首个进程需要随内核打包。`apps/microkernel/init` 包含了一个最小版本的初始化流程，它包含了 `fs_deamon` （用于启动文件系统），并调用了位于硬盘的 `net_deamon` 和 `shell`，并在初始化流程结束后循环回收僵尸进程。
+
+运行效果如下图所示。
+
+![](pics/final-1.png)
+![](pics/final-2.png)
+![](pics/final-3.png)
+
+如果需要自己编写运行在 microkernel 下的程序，只需要依赖 `libax_user`，并使用其中的系统调用接口调用相关功能。
 
 ### 性能测试
 
-为了了解微内核架构的性能开销，TODO:
+为了了解微内核架构的性能开销，我使用 `run_http_server` 程序对微内核架构的性能与原操作系统性能进行简单的对比。
 
-ab -n 100000 -c $Concurrency http://10.0.2.15:5555/
+测试采用 Apache bench 程序，命令如下：`ab -n 100000 -c 1 http://localhost:5555/`
+
+微内核架构运行结果如下（启动命令 `make A=apps/microkernel/init MICRO_TEST=run_http_server MICRO=y NET=y ARCH=riscv64 run`）：
+
+```
+Concurrency Level:      1
+Time taken for tests:   212.582 seconds
+Complete requests:      100000
+Failed requests:        0
+Total transferred:      42400000 bytes
+HTML transferred:       34000000 bytes
+Requests per second:    470.41 [#/sec] (mean)
+Time per request:       2.126 [ms] (mean)
+Time per request:       2.126 [ms] (mean, across all concurrent requests)
+Transfer rate:          194.78 [Kbytes/sec] received
+
+Connection Times (ms)
+              min  mean[+/-sd] median   max
+Connect:        0    0   0.0      0       0
+Processing:     2    2   0.1      2       8
+Waiting:        1    2   0.1      2       7
+Total:          2    2   0.2      2       8
+
+Percentage of the requests served within a certain time (ms)
+  50%      2
+  66%      2
+  75%      2
+  80%      2
+  90%      2
+  95%      2
+  98%      2
+  99%      3
+ 100%      8 (longest request) 
+```
+
+unikernel 架构运行结果如下（运行 `make A=apps/net/httpserver NET=y ARCH=riscv64 run`）：
+
+```
+Concurrency Level:      1
+Time taken for tests:   11.664 seconds
+Complete requests:      100000
+Failed requests:        0
+Total transferred:      42400000 bytes
+HTML transferred:       34000000 bytes
+Requests per second:    8573.04 [#/sec] (mean)
+Time per request:       0.117 [ms] (mean)
+Time per request:       0.117 [ms] (mean, across all concurrent requests)
+Transfer rate:          3549.77 [Kbytes/sec] received
+
+Connection Times (ms)
+              min  mean[+/-sd] median   max
+Connect:        0    0   0.0      0       0
+Processing:     0    0   0.0      0       5
+Waiting:        0    0   0.0      0       5
+Total:          0    0   0.0      0       5
+
+Percentage of the requests served within a certain time (ms)
+  50%      0
+  66%      0
+  75%      0
+  80%      0
+  90%      0
+  95%      0
+  98%      0
+  99%      0
+ 100%      5 (longest request)
+```
+
+可以看到，微内核架构对于网络请求的处理速度较 unikernel 有数量级的差异。多个方面的性能开销造成了这一结果，包括特权级切换、地址空间间的数据复制、请求转发、多线程间的调度等。
 
 ## 展望
 
 由于实验时间原因，我依然有很多细节未能完成，具体来说有以下一些内容：
 
-+ 更加完善的用户态支持。目前的内核对于进程的功能实现依然较为简陋，且并未进行大规模的测试。同时也缺少如信号、管道等必要的内核机制。
++ 更加完善的用户态支持。目前的内核对于进程的功能实现依然较为简陋，且并未进行大规模的测试。同时也缺少如信号、管道等必要的内核 IPC 机制。
 + 更具兼容性的用户库。目前的微内核版用户库对于很多的系统调用并没有像 Rust std 一样封装。同时，上游的 `libax` 库仍然在不断更新，导致与原有库的兼容性相关工作无法及时地推进，应用程序依然需要修改部分接口调用后才能正常运行。
-+ 更多的微内核特性实现。在本次实验中，我基于 Redox 操作系统的 Scheme IPC 机制实现了部分内核模块的用户态改造。但是仍有大量的 Redox 系统设计未能实现。例如，Redox 向用户暴露了地址空间、进程等的操作接口，使得运行库可以在用户态完成大部分的操作，即使像 `fork` 一类的系统调用。同时，由于迁移涉及到内存映射的调整，底层驱动模块 `axdriver` 依然在内核态提供服务。
-+ 基于微内核的系统优化。
++ 更多的微内核特性实现。在本次实验中，我基于 Redox 操作系统的 Scheme IPC 机制实现了部分内核模块的用户态改造。但是仍有大量的 Redox 系统设计未能实现。例如，Redox 向用户暴露了地址空间、进程等的操作接口，使得即使如 `fork` 一类的系统调用，运行库也可以在用户态完成大部分的操作。同时，由于迁移涉及到内存映射的调整，底层驱动模块 `axdriver` 依然在内核态提供服务。
++ 基于微内核的系统优化。目前的微内核实现较原有系统有明显的性能差距。这主要是频繁的系统调用、数据复制和任务调度导致的。同时，现有的用户态服务和应用程序也并没有对并发处理做特别的优化，可以利用线程或协程机制进行一定的改造。另外，用户态中断作为一种新兴的处理器特性，可能能够更好地实现用户程序之间的请求处理。
 
 ## 总结
 
