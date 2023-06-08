@@ -75,11 +75,11 @@ fn main() {
 
 ### 创建
 
-在服务端创建 `:/<scheme>` 文件时，会转发给 `RootScheme`，`RootScheme` 目录下每一个「文件」对应着一个用户态的 scheme，这个文件的内部数据结构则指向了一个 `UserScheme`，也就是这个 scheme 在内核中的抽象。
+在服务端创建 `:/<scheme>` 文件时，会转发给 `RootScheme`，`RootScheme` 目录下每一个「文件」对应着一个用户态的 scheme，这个文件的内部数据结构则指向了一个 `UserScheme`（严格来说，是其内部实现 `UserSchemeInner`），也就是这个 scheme 在内核中的抽象。
 
 ### 请求
 
-对于客户端的任意请求（无论是打开，读写文件或者是目录操作），`syscall` 模块都会将其转发给对应的 `UserScheme::write` 函数，在这里，请求将会被封装成数据包，并通过数据结构中的消息队列发送给 `RootScheme`，完成后，客户端对应的内核线程调用 `UserScheme::read` 函数等待请求返回。
+对于客户端的任意请求（无论是打开，读写文件或者是目录操作），`UserScheme` 模块都会将其转发给对应的 `UserSchemeInner::write` 函数，在这里，请求将会被封装成数据包，并通过数据结构中的消息队列发送给 `RootScheme`，完成后，客户端对应的内核线程调用 `UserSchemeInner::read` 函数等待请求返回。
 
 而在服务端，通过上述的轮询代码中的读请求进入内核，并进入 `RootScheme::read` 函数接收客户端发来的请求。`RootScheme` 根据文件描述符等信息确定对应的 `UserScheme` 并尝试从消息队列中读取信息，在完成必要的数据复制后返回用户态，服务端进入 `Scheme::handle`，在内部再根据数据包中的标注转发给不同的处理例程。
 
