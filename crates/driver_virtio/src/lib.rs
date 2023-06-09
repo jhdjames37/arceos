@@ -1,69 +1,76 @@
+//! Wrappers of some devices in the [`virtio-drivers`][1] crate, that implement
+//! traits in the [`driver_common`][2] series crates.
+//!
+//! Like the [`virtio-drivers`][1] crate, you must implement the [`VirtIoHal`]
+//! trait (alias of [`virtio-drivers::Hal`][3]), to allocate DMA regions and
+//! translate between physical addresses (as seen by devices) and virtual
+//! addresses (as seen by your program).
+//!
+//! [1]: https://docs.rs/virtio-drivers/latest/virtio_drivers/
+//! [2]: ../driver_common/index.html
+//! [3]: https://docs.rs/virtio-drivers/latest/virtio_drivers/trait.Hal.html
+
 #![no_std]
 #![feature(const_trait_impl)]
+#![feature(doc_auto_cfg)]
 
-#[macro_use]
-extern crate cfg_if;
-#[macro_use]
-extern crate log;
+#[cfg(feature = "block")]
+mod blk;
+#[cfg(feature = "gpu")]
+mod gpu;
+#[cfg(feature = "net")]
+mod net;
 
-cfg_if! {
-    if #[cfg(feature = "net")] {
-        mod net;
-        pub use net::VirtIoNetDev;
-    }
-}
-cfg_if! {
-    if #[cfg(feature = "block")] {
-        mod blk;
-        pub use blk::VirtIoBlkDev;
-    }
-}
-cfg_if! {
-    if #[cfg(feature = "gpu")] {
-        mod display;
-        pub use display::VirtIoGpuDev;
-    }
-}
+#[cfg(feature = "block")]
+pub use self::blk::VirtIoBlkDev;
+#[cfg(feature = "gpu")]
+pub use self::gpu::VirtIoGpuDev;
+#[cfg(feature = "net")]
+pub use self::net::VirtIoNetDev;
 
-use driver_common::{DevError, DeviceType};
-use virtio_drivers::transport::{self, Transport};
-
+pub use virtio_drivers::transport::pci::bus as pci;
+pub use virtio_drivers::transport::{mmio::MmioTransport, pci::PciTransport, Transport};
 pub use virtio_drivers::{BufferDirection, Hal as VirtIoHal, PhysAddr};
 
-#[cfg(feature = "bus-mmio")]
-pub use transport::mmio::MmioTransport;
-#[cfg(feature = "bus-pci")]
-pub use transport::pci::PciTransport;
+use self::pci::{DeviceFunction, DeviceFunctionInfo, PciRoot};
+use driver_common::{DevError, DeviceType};
+use virtio_drivers::transport::DeviceType as VirtIoDevType;
 
-#[cfg(feature = "bus-mmio")]
+/// Try to probe a VirtIO MMIO device from the given memory region.
+///
+/// If the device is recognized, returns the device type and a transport object
+/// for later operations. Otherwise, returns [`None`].
 pub fn probe_mmio_device(
     reg_base: *mut u8,
     _reg_size: usize,
-    type_match: Option<DeviceType>,
-) -> Option<MmioTransport> {
+) -> Option<(DeviceType, MmioTransport)> {
     use core::ptr::NonNull;
-    use transport::mmio::VirtIOHeader;
+    use virtio_drivers::transport::mmio::VirtIOHeader;
 
     let header = NonNull::new(reg_base as *mut VirtIOHeader).unwrap();
-    if let Ok(transport) = unsafe { MmioTransport::new(header) } {
-        if type_match.is_none() || as_dev_type(transport.device_type()) == type_match {
-            debug!(
-                "Detected virtio MMIO device with vendor id: {:#X}, device type: {:?}, version: {:?}",
-                transport.vendor_id(),
-                transport.device_type(),
-                transport.version(),
-            );
-            Some(transport)
-        } else {
-            None
-        }
-    } else {
-        None
-    }
+    let transport = unsafe { MmioTransport::new(header) }.ok()?;
+    let dev_type = as_dev_type(transport.device_type())?;
+    Some((dev_type, transport))
 }
 
-const fn as_dev_type(t: transport::DeviceType) -> Option<DeviceType> {
-    use transport::DeviceType::*;
+/// Try to probe a VirtIO PCI device from the given PCI address.
+///
+/// If the device is recognized, returns the device type and a transport object
+/// for later operations. Otherwise, returns [`None`].
+pub fn probe_pci_device<H: VirtIoHal>(
+    root: &mut PciRoot,
+    bdf: DeviceFunction,
+    dev_info: &DeviceFunctionInfo,
+) -> Option<(DeviceType, PciTransport)> {
+    use virtio_drivers::transport::pci::virtio_device_type;
+
+    let dev_type = virtio_device_type(dev_info).and_then(as_dev_type)?;
+    let transport = PciTransport::new::<H>(root, bdf).ok()?;
+    Some((dev_type, transport))
+}
+
+const fn as_dev_type(t: VirtIoDevType) -> Option<DeviceType> {
+    use VirtIoDevType::*;
     match t {
         Block => Some(DeviceType::Block),
         Network => Some(DeviceType::Net),
@@ -86,5 +93,6 @@ const fn as_dev_err(e: virtio_drivers::Error) -> DevError {
         Unsupported => DevError::Unsupported,
         ConfigSpaceTooSmall => DevError::BadState,
         ConfigSpaceMissing => DevError::BadState,
+        _ => DevError::BadState,
     }
 }

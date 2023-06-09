@@ -15,10 +15,15 @@ use core::sync::atomic::{AtomicBool, Ordering};
 
 use kernel_guard::BaseGuard;
 
-/// A [spin lock](https://en.m.wikipedia.org/wiki/Spinlock) providing mutually exclusive access to data.
+/// A [spin lock](https://en.m.wikipedia.org/wiki/Spinlock) providing mutually
+/// exclusive access to data.
 ///
-/// For single-core systems (without the "smp" feature), we remove the lock state,
-/// CPU can always get the lock if we follow the proper [`SpinLockStrategy`] in use.
+/// This is a base struct, the specific behavior depends on the generic
+/// parameter `G` that implements [`BaseGuard`], such as whether to disable
+/// local IRQs or kernel preemption before acquiring the lock.
+///
+/// For single-core environment (without the "smp" feature), we remove the lock
+/// state, CPU can always get the lock if we follow the proper guard in use.
 pub struct BaseSpinLock<G: BaseGuard, T: ?Sized> {
     _phantom: PhantomData<G>,
     #[cfg(feature = "smp")]
@@ -167,9 +172,18 @@ impl<G: BaseGuard, T: ?Sized> BaseSpinLock<G, T> {
         // there's no need to lock the inner mutex.
         unsafe { &mut *self.data.get() }
     }
+
+    /// Returns a mutable pointer to the underlying data.
+    ///
+    /// # Safety
+    /// Can only be used in interrupt handler
+    #[inline(always)]
+    pub fn as_mut_ptr(&self) -> *mut T {
+        self.data.get()
+    }
 }
 
-impl<G: BaseGuard, T: ?Sized + ~const Default> const Default for BaseSpinLock<G, T> {
+impl<G: BaseGuard, T: ?Sized + Default> Default for BaseSpinLock<G, T> {
     #[inline(always)]
     fn default() -> Self {
         Self::new(Default::default())
@@ -347,7 +361,7 @@ mod tests {
     fn test_mutex_arc_access_in_unwind() {
         let arc = Arc::new(SpinMutex::<_>::new(1));
         let arc2 = arc.clone();
-        let _ = thread::spawn(move || -> () {
+        let _ = thread::spawn(move || {
             struct Unwinder {
                 i: Arc<SpinMutex<i32>>,
             }

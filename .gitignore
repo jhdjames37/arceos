@@ -3,3 +3,6 @@
 .DS_Store
 *.asm
 *.img
+actual.out
+qemu.log
+tools/fat32-pack/target

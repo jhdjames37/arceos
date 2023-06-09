@@ -9,6 +9,14 @@ use crate::{AllocError, AllocResult, BaseAllocator, PageAllocator};
 // Support max 1M * 4096 = 4GB memory.
 type BitAllocUsed = bitmap_allocator::BitAlloc1M;
 
+/// A page-granularity memory allocator based on the [bitmap_allocator].
+///
+/// It internally uses a bitmap, each bit indicates whether a page has been
+/// allocated.
+///
+/// The `PAGE_SIZE` must be a power of two.
+///
+/// [bitmap_allocator]: https://github.com/rcore-os/bitmap-allocator
 pub struct BitmapPageAllocator<const PAGE_SIZE: usize> {
     base: usize,
     total_pages: usize,
@@ -17,6 +25,7 @@ pub struct BitmapPageAllocator<const PAGE_SIZE: usize> {
 }
 
 impl<const PAGE_SIZE: usize> BitmapPageAllocator<PAGE_SIZE> {
+    /// Creates a new empty `BitmapPageAllocator`.
     pub const fn new() -> Self {
         Self {
             base: 0,
@@ -64,7 +73,9 @@ impl<const PAGE_SIZE: usize> PageAllocator for BitmapPageAllocator<PAGE_SIZE> {
     fn dealloc_pages(&mut self, pos: usize, num_pages: usize) {
         // TODO: not decrease `used_pages` if deallocation failed
         self.used_pages -= num_pages;
-        self.inner.dealloc((pos - self.base) / PAGE_SIZE)
+        for p in 0..num_pages {
+            self.inner.dealloc((pos - self.base) / PAGE_SIZE + p)
+        }
     }
 
     fn total_pages(&self) -> usize {

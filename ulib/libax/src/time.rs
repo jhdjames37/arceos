@@ -1,13 +1,21 @@
+//! Temporal quantification.
+
 pub use core::time::Duration;
 
 /// A measurement of a monotonically nondecreasing clock.
 /// Opaque and useful only with [`Duration`].
+#[derive(Clone, Copy)]
 pub struct Instant(Duration);
 
 impl Instant {
     /// Returns an instant corresponding to "now".
     pub fn now() -> Instant {
         Instant(axhal::time::current_time())
+    }
+
+    /// Converts an `Instant` to a `Duration` directly.
+    pub(crate) fn as_duration(&self) -> Duration {
+        self.0
     }
 
     /// Returns the amount of time elapsed from another instant to this one,

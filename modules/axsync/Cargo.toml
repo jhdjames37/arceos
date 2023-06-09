@@ -3,17 +3,25 @@ name = "axsync"
 version = "0.1.0"
 edition = "2021"
 authors = ["Yuekai Jia <equation618@gmail.com>"]
-
-# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
+description = "ArceOS synchronization primitives"
+license = "GPL-3.0-or-later OR Apache-2.0"
+homepage = "https://github.com/rcore-os/arceos"
+repository = "https://github.com/rcore-os/arceos/tree/main/modules/axsync"
+documentation = "https://rcore-os.github.io/arceos/axsync/index.html"
 
 [features]
 multitask = ["axtask/multitask"]
 default = ["multitask", "axtask/default"]
+futex = ["dep:memory_addr", "dep:axalloc", "dep:lazy_init", "dep:syscall_number"]
 
 [dependencies]
 spinlock = { path = "../../crates/spinlock" }
 axtask = { path = "../axtask", default-features = false }
+memory_addr = { path = "../../crates/memory_addr", optional = true}
+axalloc = {path = "../axalloc", optional = true}
+lazy_init = { path = "../../crates/lazy_init", optional = true }
+syscall_number = { path = "../../crates/syscall_number", optional = true }
 
 [dev-dependencies]
 rand = "0.8"
-percpu = { path = "../../crates/percpu", features = ["sp-naive"] }
+axtask = { path = "../axtask", default-features = false, features = ["test"] }

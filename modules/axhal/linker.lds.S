@@ -11,7 +11,12 @@ SECTIONS
     .text : ALIGN(4K) {
         stext = .;
         *(.text.boot)
-        *(.text .text.*)
+        *(.text)
+        . = ALIGN(4K);
+        strampoline = .;
+        *(.text.trampoline)
+        . = ALIGN(4K);
+        *(.text.*)
         . = ALIGN(4K);
         etext = .;
     }
@@ -20,6 +25,7 @@ SECTIONS
         srodata = .;
         *(.rodata .rodata.*)
         *(.srodata .srodata.*)
+        *(.sdata2 .sdata2.*)
         . = ALIGN(4K);
         erodata = .;
     }
@@ -57,6 +63,7 @@ SECTIONS
         sbss = .;
         *(.bss .bss.*)
         *(.sbss .sbss.*)
+        *(COMMON)
         . = ALIGN(4K);
         ebss = .;
     }
