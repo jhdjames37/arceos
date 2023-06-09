@@ -79,7 +79,9 @@ impl<const PAGE_SIZE: usize> PageAllocator for BitmapPageAllocator<PAGE_SIZE> {
     fn dealloc_pages(&mut self, pos: usize, num_pages: usize) {
         // TODO: not decrease `used_pages` if deallocation failed
         self.used_pages -= num_pages;
-        self.inner.dealloc((pos - self.base) / PAGE_SIZE)
+        for i in 0..num_pages {
+            self.inner.dealloc((pos - self.base) / PAGE_SIZE + i)
+        }
     }
 
     fn total_pages(&self) -> usize {
