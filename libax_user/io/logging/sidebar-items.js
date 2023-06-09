@@ -1,0 +1,1 @@
+window.SIDEBAR_ITEMS = {"fn":["__print_impl"],"macro":["debug","error","info","trace","warn"]};

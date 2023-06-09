@@ -1,0 +1,1 @@
+window.SIDEBAR_ITEMS = {"constant":["SEEK_CUR","SEEK_END","SEEK_SET"],"struct":["OpenFlags"]};
